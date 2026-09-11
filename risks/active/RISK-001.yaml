@@ -1,0 +1,9 @@
+risk_key: RISK-001
+risk_name: test
+uki_brand:
+- Sky Bet
+- tombola
+risk_event_description: test
+domain: Cloud Platform Adoption
+context_background: test
+impacted_assets: tes
