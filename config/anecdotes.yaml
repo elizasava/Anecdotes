@@ -1,8 +1,7 @@
 # Anecdotes integration settings.
 # The API token is NEVER stored here. It must be a GitHub Secret named ANECDOTES.
 
-# 🔴🔴🔴 REQUIRED: replace this placeholder with the Risk Register ID you already identified. 🔴🔴🔴
-register_id: "🔴 PASTE_YOUR_ANECDOTES_REGISTER_ID_HERE 🔴"
+register_id: "830f13d3-1f0b-4659-8fb3-8ab5a2bf737b"
 
 # Your tenant/browser calls showed gateway.anecdotes.ai for risk/custom-field calls.
 api_base_url: "https://gateway.anecdotes.ai"
