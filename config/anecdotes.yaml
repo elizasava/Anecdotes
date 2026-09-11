@@ -1,0 +1,52 @@
+# Anecdotes integration settings.
+# The API token is NEVER stored here. It must be a GitHub Secret named ANECDOTES.
+
+# 🔴🔴🔴 REQUIRED: replace this placeholder with the Risk Register ID you already identified. 🔴🔴🔴
+register_id: "🔴 PASTE_YOUR_ANECDOTES_REGISTER_ID_HERE 🔴"
+
+# Your tenant/browser calls showed gateway.anecdotes.ai for risk/custom-field calls.
+api_base_url: "https://gateway.anecdotes.ai"
+
+# Official Anecdotes docs currently document token exchange on api.anecdotes.ai.
+auth_exchange_url: "https://api.anecdotes.ai/identity/v1/apikey/exchange"
+
+user_agent: "github-anecdotes-risk-sync/1.0"
+
+# Human-facing field names in Anecdotes. The sync resolves their IDs dynamically.
+field_names:
+  uki_brand: "UKI Brand"
+  risk_event_description: "Risk event description"
+  domain: "Domain"
+  context_background: "Context/background"
+  impacted_assets: "Impacted asset/s"
+
+# Repository-side validation choices. Matching is case-insensitive.
+allowed_uki_brands:
+  - "Sky Bet"
+  - "tombola"
+  - "Sky Gaming"
+  - "Betfair"
+  - "Paddy Power"
+  - "Pokerstars"
+
+allowed_domains:
+  - "Malware Event (Ransomware/Spyware)"
+  - "Supply Chain"
+  - "Phishing"
+  - "Cloud Platform Adoption"
+  - "Tech Regulatory & Compliance"
+  - "Manage Tech Availability"
+  - "IT Operational Resilience"
+  - "Misconfiguration"
+  - "Data Exfiltration"
+  - "System Resilience (inc. DDoS)"
+  - "End User Tech Risk (Shadow IT)"
+  - "Third Party & Outsourcing Risk"
+  - "Emerging Tech Risk (AI, Quantum)"
+  - "AI Cyber Risk"
+  - "Legacy Systems & Tech Debt"
+  - "Access Management Risk"
+  - "Insider Threat"
+  - "Data Governance & Quality"
+  - "Manage Tech Change"
+  - "Cyber Governance"

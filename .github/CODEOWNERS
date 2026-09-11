@@ -1,0 +1,6 @@
+# Replace @YOUR-RISK-TEAM with your real GitHub team/user.
+# Keep CODEOWNERS itself protected so the protection cannot be removed casually.
+/.github/ @YOUR-RISK-TEAM
+/system/anecdotes-risk-map.yaml @YOUR-RISK-TEAM
+/config/anecdotes.yaml @YOUR-RISK-TEAM
+/scripts/ @YOUR-RISK-TEAM

@@ -1,0 +1,45 @@
+name: Validate risks
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'risks/**'
+      - 'system/anecdotes-risk-map.yaml'
+      - 'config/anecdotes.yaml'
+      - 'scripts/**'
+      - 'tests/**'
+      - '.github/workflows/**'
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install -r requirements.txt
+      - name: Validate risk YAML and block deletions
+        run: python scripts/validate_risks.py --base-ref origin/${{ github.base_ref }}
+      - name: Protect machine mapping file
+        env:
+          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+          HEAD_REF: ${{ github.head_ref }}
+          # Set repository variable MAPPING_BOT_LOGIN to the login used by your existing PR automation.
+          # If omitted, github-actions[bot] is assumed.
+          # Mapping branch accepted by policy: automation/anecdotes-map (legacy automation/anecdotes-map-* also accepted).
+          MAPPING_BOT_LOGIN: ${{ vars.MAPPING_BOT_LOGIN || 'github-actions[bot]' }}
+        run: >-
+          python scripts/protect_mapping.py
+          --base-ref origin/${{ github.base_ref }}
+          --author "$PR_AUTHOR"
+          --head-ref "$HEAD_REF"
+          --allowed-bot "$MAPPING_BOT_LOGIN"
+      - name: Unit tests
+        run: pytest -q

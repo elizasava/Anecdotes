@@ -1,0 +1,115 @@
+name: Sync risks to Anecdotes
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'risks/active/*.yaml'
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Dry run only (no create/update calls), but verify Anecdotes connection.'
+        required: true
+        default: true
+        type: boolean
+      files:
+        description: 'Optional space-separated risk files; defaults to all risks/active/*.yaml for manual runs.'
+        required: false
+        default: ''
+        type: string
+
+# Prevent two merges from syncing at the same time.
+concurrency:
+  group: anecdotes-risk-sync
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install -r requirements.txt
+
+      - name: Resolve mode and arguments
+        id: mode
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" && "${{ inputs.dry_run }}" == "true" ]]; then
+            echo "dry=true" >> "$GITHUB_OUTPUT"
+            echo "extra=--dry-run --check-connection" >> "$GITHUB_OUTPUT"
+          else
+            echo "dry=false" >> "$GITHUB_OUTPUT"
+            echo "extra=" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Determine changed risk files
+        id: changed
+        shell: bash
+        run: |
+          set -euo pipefail
+          FILES=""
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            INPUT_FILES='${{ inputs.files }}'
+            if [[ -n "$INPUT_FILES" ]]; then
+              FILES="$INPUT_FILES"
+            else
+              FILES=$(git ls-files 'risks/active/*.yaml' | tr '\n' ' ')
+            fi
+          else
+            BEFORE='${{ github.event.before }}'
+            AFTER='${{ github.sha }}'
+            if [[ "$BEFORE" =~ ^0+$ ]]; then
+              FILES=$(git ls-files 'risks/active/*.yaml' | tr '\n' ' ')
+            else
+              FILES=$(git diff --diff-filter=ACMRT --name-only "$BEFORE" "$AFTER" -- 'risks/active/*.yaml' | tr '\n' ' ')
+            fi
+          fi
+          echo "files=$FILES" >> "$GITHUB_OUTPUT"
+
+      - name: Sync create/update
+        if: steps.changed.outputs.files != ''
+        env:
+          # Required secret. Exact name requested: ANECDOTES
+          ANECDOTES: ${{ secrets.ANECDOTES }}
+          ANECDOTES_URL: ${{ vars.ANECDOTES_URL }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          MAPPING_BRANCH: automation/anecdotes-map
+        run: python scripts/sync_risks.py --files ${{ steps.changed.outputs.files }} ${{ steps.mode.outputs.extra }}
+
+      - name: Check whether a mapping PR is required
+        id: map
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -f .sync/result.json ]]; then
+            CHANGED=$(python -c "import json; print(str(json.load(open('.sync/result.json'))['mapping_changed']).lower())")
+          else
+            CHANGED=false
+          fi
+          echo "changed=$CHANGED" >> "$GITHUB_OUTPUT"
+
+      - name: Open / update mapping PR
+        if: steps.map.outputs.changed == 'true' && steps.mode.outputs.dry != 'true'
+        uses: peter-evans/create-pull-request@v7
+        with:
+          branch: automation/anecdotes-map
+          base: main
+          title: "chore(anecdotes): sync Anecdotes risk mapping"
+          commit-message: "chore(anecdotes): sync Anecdotes risk mapping"
+          body-path: .sync/mapping_pr_body.md
+          labels: |
+            risks
+            automated
+          add-paths: |
+            system/anecdotes-risk-map.yaml
+          delete-branch: true
