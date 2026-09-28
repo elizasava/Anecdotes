@@ -65,3 +65,23 @@ def test_nested_string_options_are_supported():
     field_id, value = resolver.encode("UKI Brand", ["sky bet", "POKERSTARS"])
     assert field_id == "field-brand"
     assert value == ["Sky Bet", "Pokerstars"]
+
+
+def test_code_prefixed_labels_match_human_readable_values():
+    fields = [
+        {
+            "id": "field-domain",
+            "name": "Domain",
+            "type": "DropDown",
+            "field_metadata": {
+                "values": {
+                    "149bfc4c-67f3-489c-8072-2b4a751aaa73": "CYB01 - Malware Event (Ransomware/Spyware)",
+                    "2b4e05f7-2245-43c7-90ec-a7a5ae276b74": "TR3 - Cloud Platform Adoption",
+                }
+            },
+        }
+    ]
+    resolver = FieldResolver(fields)
+    field_id, value = resolver.encode("Domain", "Cloud Platform Adoption")
+    assert field_id == "field-domain"
+    assert value == "2b4e05f7-2245-43c7-90ec-a7a5ae276b74"

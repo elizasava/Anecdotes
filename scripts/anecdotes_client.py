@@ -157,7 +157,8 @@ class FieldResolver:
                 option_id = option.get("id") or option.get("valueId") or option.get("uuid")
                 label = option.get("name") or option.get("label") or option.get("value") or option.get("title")
                 if isinstance(option_id, str) and isinstance(label, str):
-                    labels_to_ids[normalize(label)] = (option_id, label)
+                    for alias in self._label_aliases(label):
+                        labels_to_ids[normalize(alias)] = (option_id, label)
 
             values = value if isinstance(value, list) else [value]
             resolved: list[str] = []
@@ -192,6 +193,9 @@ class FieldResolver:
                             return value
                         if all(isinstance(x, str) for x in value):
                             return [{"id": item, "label": item} for item in value]
+                    if key in option_keys and isinstance(value, dict):
+                        if all(isinstance(k, str) and isinstance(v, str) for k, v in value.items()):
+                            return [{"id": option_id, "label": label} for option_id, label in value.items()]
                     found = walk(value)
                     if found:
                         return found
@@ -203,3 +207,10 @@ class FieldResolver:
             return []
 
         return walk(field)
+
+    @staticmethod
+    def _label_aliases(label: str) -> list[str]:
+        aliases = [label]
+        if " - " in label:
+            aliases.append(label.split(" - ", 1)[1])
+        return list(dict.fromkeys(aliases))
