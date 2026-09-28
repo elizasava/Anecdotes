@@ -1,4 +1,6 @@
-# MACHINE-MANAGED FILE — DO NOT EDIT MANUALLY.
-# Created/updated only by the post-merge sync automation.
 version: 1
-risks: {}
+risks:
+  RISK-001:
+    anecdotes_internal_id: risk_2773873914300
+    anecdotes_risk_id: R-9901
+    source_file: risks/active/RISK-001.yaml
