@@ -182,16 +182,24 @@ class FieldResolver:
 
     @classmethod
     def _options(cls, field: dict[str, Any]) -> list[dict[str, Any]]:
-        candidates = [field]
-        for key in ("metadata", "config", "configuration", "settings"):
-            nested = field.get(key)
-            if isinstance(nested, dict):
-                candidates.append(nested)
-        for container in candidates:
-            for key in ("options", "values", "items", "choices", "enumValues", "selectOptions"):
-                value = container.get(key)
-                if isinstance(value, list) and all(isinstance(x, dict) for x in value):
-                    return value
-                if isinstance(value, list) and all(isinstance(x, str) for x in value):
-                    return [{"id": item, "label": item} for item in value]
-        return []
+        option_keys = {"options", "values", "items", "choices", "enumValues", "selectOptions"}
+
+        def walk(node: Any) -> list[dict[str, Any]]:
+            if isinstance(node, dict):
+                for key, value in node.items():
+                    if key in option_keys and isinstance(value, list):
+                        if all(isinstance(x, dict) for x in value):
+                            return value
+                        if all(isinstance(x, str) for x in value):
+                            return [{"id": item, "label": item} for item in value]
+                    found = walk(value)
+                    if found:
+                        return found
+            elif isinstance(node, list):
+                for item in node:
+                    found = walk(item)
+                    if found:
+                        return found
+            return []
+
+        return walk(field)

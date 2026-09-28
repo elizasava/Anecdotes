@@ -46,3 +46,22 @@ def test_string_options_are_supported():
     field_id, value = resolver.encode("UKI Brand", ["sky bet", "POKERSTARS"])
     assert field_id == "field-brand"
     assert value == ["Sky Bet", "Pokerstars"]
+
+
+def test_nested_string_options_are_supported():
+    fields = [
+        {
+            "id": "field-brand",
+            "name": "UKI Brand",
+            "type": "MultiSelect",
+            "metadata": {
+                "configuration": {
+                    "selectOptions": ["Sky Bet", "Pokerstars"],
+                }
+            },
+        }
+    ]
+    resolver = FieldResolver(fields)
+    field_id, value = resolver.encode("UKI Brand", ["sky bet", "POKERSTARS"])
+    assert field_id == "field-brand"
+    assert value == ["Sky Bet", "Pokerstars"]
