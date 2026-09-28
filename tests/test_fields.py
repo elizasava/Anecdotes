@@ -31,3 +31,18 @@ def test_free_text_is_preserved():
     field_id, value = resolver.encode("IMPACTED ASSET/S", "Payments platform")
     assert field_id == "field-text"
     assert value == "Payments platform"
+
+
+def test_string_options_are_supported():
+    fields = [
+        {
+            "id": "field-brand",
+            "name": "UKI Brand",
+            "type": "MultiSelect",
+            "options": ["Sky Bet", "Pokerstars"],
+        }
+    ]
+    resolver = FieldResolver(fields)
+    field_id, value = resolver.encode("UKI Brand", ["sky bet", "POKERSTARS"])
+    assert field_id == "field-brand"
+    assert value == ["Sky Bet", "Pokerstars"]

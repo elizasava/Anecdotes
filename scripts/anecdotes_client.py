@@ -192,4 +192,6 @@ class FieldResolver:
                 value = container.get(key)
                 if isinstance(value, list) and all(isinstance(x, dict) for x in value):
                     return value
+                if isinstance(value, list) and all(isinstance(x, str) for x in value):
+                    return [{"id": item, "label": item} for item in value]
         return []
