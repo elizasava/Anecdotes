@@ -9,31 +9,82 @@ and it will run on its own.
 
 ## Setup
 
+### Step 1 — Install the dependency (once per machine)
+
 Requires Python 3.9+ and `requests`:
 
 ```bash
 pip install -r cli/requirements.txt
 ```
 
-Then set your **own** Anecdotes API token:
+You only ever do this once. It is not needed per session — the only per-terminal
+step is entering the token (step 3).
+
+### Step 2 — Open a terminal in the repo
 
 ```bash
-export ANECDOTES='<your api token>'
+cd /path/to/Anecdotes
+```
+
+A fresh terminal tab avoids inheriting stale environment variables.
+
+### Step 3 — Enter your token without exposing it
+
+```bash
+read -rs "ANECDOTES?Anecdotes token: " && export ANECDOTES
+```
+
+Press Enter, paste the token, press Enter again. **Nothing appears as you type —
+that is expected.**
+
+Use this rather than `export ANECDOTES='...'`. Typing the token directly on the
+command line writes it in clear text into `~/.zsh_history`, where it persists
+indefinitely and ends up in backups. `read -rs` keeps it out of history and off
+the screen; the `-s` suppresses echo and the `-r` stops backslashes being
+interpreted.
+
+### Step 4 — Confirm it was set
+
+```bash
+echo "${#ANECDOTES}"
+```
+
+This prints the character count, never the token. A plausible non-zero number
+means you are ready. `0` means it did not take — repeat step 3.
+
+If the number is roughly double what you expect, you pasted twice. That produces
+`HTTP 401: Api key invalid`, which is the most common first-run failure.
+
+### Token scope and lifetime
+
+The token lives **only in that terminal tab**, in memory, until you close it.
+Other tabs and other applications cannot see it. Processes you launch from that
+tab inherit it, which is how the CLI receives it — so avoid running untrusted
+scripts from the same tab.
+
+Open a new tab and you repeat step 3. To clear it early:
+
+```bash
+unset ANECDOTES
 ```
 
 ### About the token
 
-- It is read from your local environment only. Never commit it, and never add it
-  to a `.env` file that is tracked by git.
-- Use your own personal token rather than a shared team token. Anecdotes records
-  the token as the actor, so a shared token makes it impossible to tell who
-  created or changed a risk.
-- Avoid putting it in `~/.zshrc` — that is plaintext on disk and leaks into shell
-  history and backups. Prefer macOS Keychain, `direnv` with a gitignored
-  `.envrc`, or your team's secret manager.
+- Use your **own personal** token, not a shared team one. Anecdotes records the
+  token as the actor, so a shared token makes it impossible to tell who created
+  or changed a risk. With no pull-request trail, the token is your only audit
+  record.
+- It must be an **API key** issued for programmatic access, not a session token
+  copied from browser developer tools. Those will not exchange.
+- API keys expire. `HTTP 401: Api key invalid` on a clean single paste means it
+  is time to generate a new one in Anecdotes.
+- Never commit it, and never put it in a tracked `.env` file.
+- Avoid `~/.zshrc` — plaintext on disk. If re-entering it each session becomes
+  tedious, prefer `direnv` with a gitignored `.envrc`, macOS Keychain, or your
+  team's secret manager.
 
-The `ANECDOTES` **GitHub** secret is unrelated: it exists so the Actions sync
-workflow can run unattended. This CLI needs no repository secret.
+The `ANECDOTES` **GitHub secret** is a separate thing. It exists so the Actions
+sync workflow can run unattended in CI. This CLI needs no repository secret.
 
 ### Optional overrides
 
@@ -46,9 +97,84 @@ All default to values baked into `risk_cli.py`:
 | `ANECDOTES_AUTH_URL` | API-key to JWT exchange endpoint |
 | `ANECDOTES_USER_AGENT` | User-Agent sent to Anecdotes |
 
+## First run
+
+Work through these in order. Each step builds confidence before anything can be
+written to Anecdotes.
+
+### Step 5 — Dry-run an update first
+
+```bash
+python3 cli/risk_cli.py update --dry-run
+```
+
+Start with `update`, not `create`. It is read-only, and it exercises the most
+moving parts in one go: authentication, risk listing, custom-field lookup, and
+decoding stored option IDs back into readable values. If something is
+misconfigured, this is where you find out, with zero risk.
+
+You should see `DRY RUN - NO CHANGES WILL BE MADE` first.
+
+Then:
+
+1. **Search** — type part of a risk name, or press Enter to list everything.
+2. **Select risk (number)** — type a number. Nothing is auto-selected, even when
+   only one risk matches.
+3. **Six field prompts** — press Enter on each to keep it unchanged. To see a
+   diff, change exactly one field.
+4. The CLI prints the OLD -> NEW diff, the exact PATCH payload it *would* send,
+   and `DRY RUN - NO CHANGES WERE MADE`.
+
+No confirmation is requested in dry-run, because there is nothing to confirm.
+
+To leave at any point press **Ctrl+C**. It exits cleanly with
+`Cancelled. Nothing was changed in Anecdotes.`
+
+Checks worth making: the current values match what the Anecdotes UI shows, and
+pressing Enter through every field reports
+`No changes detected. Nothing to update.`
+
+### Step 6 — Dry-run a create
+
+```bash
+python3 cli/risk_cli.py create --dry-run
+```
+
+Confirm the resolved custom-field IDs and option IDs look like real Anecdotes
+identifiers, and that the printed payload is complete.
+
+### Step 7 — First live create
+
+```bash
+python3 cli/risk_cli.py create
+```
+
+Use an obvious throwaway name such as `ZZZ TEST - delete me`. This CLI has **no
+delete** by design, so remove the test risk through the Anecdotes UI afterwards.
+
+You will be asked `Create this risk in Anecdotes? [y/N]`. Only `y` or `yes`
+proceeds; anything else, including pressing Enter, aborts without writing.
+
+### Step 8 — First live update
+
+```bash
+python3 cli/risk_cli.py update
+```
+
+Edit the test risk you just created, check the diff, and confirm.
+
+### Troubleshooting
+
+| Symptom | Cause |
+| --- | --- |
+| `JWT exchange failed: HTTP 401: Api key invalid` | Wrong, doubled, or expired token. Repeat steps 3–4. |
+| `Could not list risks from Anecdotes` | The risk-listing endpoint differs from the one assumed in `list_risks`. |
+| `NotOpenSSLWarning ... LibreSSL` | Harmless macOS system-Python warning. Ignore it. |
+| `ANECDOTES is not set` | New terminal tab. Repeat step 3. |
+
 ## Usage
 
-Always start with `--dry-run`.
+Once set up, day to day:
 
 ```bash
 python3 cli/risk_cli.py create --dry-run
@@ -95,5 +221,5 @@ immediately before applying changes.
 python3 -m pytest cli -q
 ```
 
-50 tests, no network calls, no credentials needed. They run automatically in CI
+52 tests, no network calls, no credentials needed. They run automatically in CI
 via the `Validate risks` workflow.
