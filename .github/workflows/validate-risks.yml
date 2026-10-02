@@ -8,6 +8,7 @@ on:
       - 'system/anecdotes-risk-map.yaml'
       - 'config/anecdotes.yaml'
       - 'scripts/**'
+      - 'cli/**'
       - 'tests/**'
       - '.github/workflows/**'
 
