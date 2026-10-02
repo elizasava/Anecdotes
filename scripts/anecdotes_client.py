@@ -9,33 +9,17 @@ from common import normalize
 
 
 class AnecdotesError(RuntimeError):
-    def __init__(self, message: str, status_code: int | None = None):
-        super().__init__(message)
-        self.status_code = status_code
-
-
-class ReadOnlyModeError(AnecdotesError):
-    """Raised when a mutating request is attempted while the client is read-only."""
+    pass
 
 
 class AnecdotesClient:
-    READ_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
-
-    def __init__(
-        self,
-        api_key: str,
-        api_base_url: str,
-        auth_exchange_url: str,
-        user_agent: str,
-        read_only: bool = False,
-    ):
+    def __init__(self, api_key: str, api_base_url: str, auth_exchange_url: str, user_agent: str):
         if not api_key.strip():
             raise ValueError("ANECDOTES secret is empty")
         self.api_key = api_key.strip()
         self.api_base_url = api_base_url.rstrip("/")
         self.auth_exchange_url = auth_exchange_url
         self.user_agent = user_agent
-        self.read_only = read_only
         self.session = requests.Session()
         self.jwt = self._exchange_token()
 
@@ -46,10 +30,7 @@ class AnecdotesClient:
             timeout=30,
         )
         if not response.ok:
-            raise AnecdotesError(
-                f"JWT exchange failed: HTTP {response.status_code}: {response.text[:500]}",
-                status_code=response.status_code,
-            )
+            raise AnecdotesError(f"JWT exchange failed: HTTP {response.status_code}: {response.text[:500]}")
         try:
             payload = response.json()
         except ValueError:
@@ -74,19 +55,7 @@ class AnecdotesClient:
                     return token
         return None
 
-    def _request(
-        self,
-        method: str,
-        path: str,
-        *,
-        json: dict[str, Any] | None = None,
-        params: dict[str, Any] | None = None,
-    ) -> Any:
-        # Single choke point: in read-only mode nothing but safe reads can leave the process.
-        if self.read_only and method.upper() not in self.READ_METHODS:
-            raise ReadOnlyModeError(
-                f"Blocked {method.upper()} {path}: Anecdotes client is in read-only (dry-run) mode"
-            )
+    def _request(self, method: str, path: str, *, json: dict[str, Any] | None = None) -> Any:
         url = f"{self.api_base_url}{path}"
         headers = {
             "Authorization": f"Bearer {self.jwt}",
@@ -96,9 +65,7 @@ class AnecdotesClient:
         last_error: Exception | None = None
         for attempt in range(1, 5):
             try:
-                response = self.session.request(
-                    method, url, headers=headers, json=json, params=params, timeout=30
-                )
+                response = self.session.request(method, url, headers=headers, json=json, timeout=30)
             except requests.RequestException as exc:
                 last_error = exc
                 if attempt == 4:
@@ -115,10 +82,7 @@ class AnecdotesClient:
                     time.sleep(2 ** (attempt - 1))
                     continue
             if not response.ok:
-                raise AnecdotesError(
-                    f"{method} {path} failed: HTTP {response.status_code}: {response.text[:1000]}",
-                    status_code=response.status_code,
-                )
+                raise AnecdotesError(f"{method} {path} failed: HTTP {response.status_code}: {response.text[:1000]}")
             if not response.content:
                 return None
             try:
@@ -131,36 +95,6 @@ class AnecdotesClient:
         payload = self._request("GET", "/custom-fields/v1/fields")
         return self._extract_list(payload)
 
-    def list_risks(self, register_id: str | None = None) -> list[dict[str, Any]]:
-        attempts: list[tuple[str, dict[str, Any] | None]] = []
-        for path in ("/risk/v1/risk", "/risk/v1/risks"):
-            if register_id:
-                attempts.append((path, {"register_id": register_id}))
-            attempts.append((path, None))
-
-        problems: list[str] = []
-        for path, params in attempts:
-            try:
-                payload = self._request("GET", path, params=params)
-                return self._extract_list(payload, label="risk")
-            except ReadOnlyModeError:
-                raise
-            except AnecdotesError as exc:
-                problems.append(f"GET {path} ({params or 'no params'}) -> {exc}")
-        raise AnecdotesError(
-            "Could not list risks from Anecdotes. Tried:\n  " + "\n  ".join(problems)
-        )
-
-    def get_risk(self, internal_id: str) -> dict[str, Any]:
-        result = self._request("GET", f"/risk/v1/risk/{internal_id}")
-        if isinstance(result, dict):
-            for key in ("risk", "data", "item", "result"):
-                nested = result.get(key)
-                if isinstance(nested, dict) and nested:
-                    return nested
-            return result
-        raise AnecdotesError(f"Get Risk {internal_id} returned an unexpected response")
-
     def create_risk(self, payload: dict[str, Any]) -> dict[str, Any]:
         result = self._request("POST", "/risk/v1/risk", json=payload)
         if not isinstance(result, dict):
@@ -171,18 +105,18 @@ class AnecdotesClient:
         return self._request("PATCH", f"/risk/v1/risk/{internal_id}", json=payload)
 
     @staticmethod
-    def _extract_list(payload: Any, label: str = "custom-field") -> list[dict[str, Any]]:
+    def _extract_list(payload: Any) -> list[dict[str, Any]]:
         if isinstance(payload, list):
             return [x for x in payload if isinstance(x, dict)]
         if isinstance(payload, dict):
-            for key in ("items", "data", "fields", "results", "risks"):
+            for key in ("items", "data", "fields", "results"):
                 value = payload.get(key)
                 if isinstance(value, list):
                     return [x for x in value if isinstance(x, dict)]
             for value in payload.values():
                 if isinstance(value, list) and all(isinstance(x, dict) for x in value):
                     return value
-        raise AnecdotesError(f"Could not find a {label} list in the Anecdotes response")
+        raise AnecdotesError("Could not find a custom-field list in the Anecdotes response")
 
 
 class FieldResolver:
@@ -246,49 +180,6 @@ class FieldResolver:
         if isinstance(value, list):
             raise AnecdotesError(f"Cannot resolve options for multi-value field {field_name!r}; metadata shape is unsupported")
         return field_id, value
-
-    def field_id(self, name: str) -> str:
-        field_id = self.field(name).get("id")
-        if not isinstance(field_id, str) or not field_id:
-            raise AnecdotesError(f"Custom field {name!r} has no id")
-        return field_id
-
-    def is_multi_select(self, name: str) -> bool:
-        return "multi" in normalize(str(self.field(name).get("type", "")))
-
-    def option_labels(self, name: str) -> list[str]:
-        """Human-readable option labels as currently defined in Anecdotes."""
-        labels: list[str] = []
-        for option in self._options(self.field(name)):
-            label = option.get("name") or option.get("label") or option.get("value") or option.get("title")
-            if isinstance(label, str) and label not in labels:
-                labels.append(label)
-        return labels
-
-    def decode(self, field_name: str, raw: Any) -> str | list[str]:
-        """Inverse of encode: turn stored option ids back into human-readable labels."""
-        options = self._options(self.field(field_name))
-        if not options:
-            return raw if isinstance(raw, str) else ("" if raw is None else str(raw))
-
-        by_id: dict[str, str] = {}
-        for option in options:
-            option_id = option.get("id") or option.get("valueId") or option.get("uuid")
-            label = option.get("name") or option.get("label") or option.get("value") or option.get("title")
-            if isinstance(option_id, str) and isinstance(label, str):
-                by_id[option_id] = label
-
-        def one(item: Any) -> str:
-            if isinstance(item, dict):
-                item = item.get("id") or item.get("valueId") or item.get("value") or ""
-            return by_id.get(item, str(item)) if isinstance(item, str) else str(item)
-
-        if isinstance(raw, list):
-            return [one(item) for item in raw]
-        if raw is None or raw == "":
-            return [] if self.is_multi_select(field_name) else ""
-        decoded = one(raw)
-        return [decoded] if self.is_multi_select(field_name) else decoded
 
     @classmethod
     def _options(cls, field: dict[str, Any]) -> list[dict[str, Any]]:
