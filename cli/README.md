@@ -120,8 +120,8 @@ Then:
 1. **Search** — type part of a risk name, or press Enter to list everything.
 2. **Select risk (number)** — type a number. Nothing is auto-selected, even when
    only one risk matches.
-3. **Six field prompts** — press Enter on each to keep it unchanged. To see a
-   diff, change exactly one field.
+3. **Field prompts** — there are 15 values including Risk name. Press Enter on
+  existing values to keep them unchanged. To see a diff, change exactly one.
 4. The CLI prints the OLD -> NEW diff, the exact PATCH payload it *would* send,
    and `DRY RUN - NO CHANGES WERE MADE`.
 
@@ -184,16 +184,31 @@ python3 cli/risk_cli.py create
 python3 cli/risk_cli.py update
 ```
 
-`create` walks you through the six managed fields, shows a preview, and asks for
-confirmation. Anecdotes generates the Risk ID; the CLI never invents one.
+`create` walks you through Risk name and 14 custom fields, shows a preview, and
+asks for confirmation. Anecdotes generates the Risk ID; the CLI never invents
+one.
 
 `update` lists risks from Anecdotes, requires you to explicitly select one,
 shows its current values, lets you edit any field, prints an OLD -> NEW diff, and
 patches only the fields that actually changed.
 
-Dropdown options (UKI Brand, Domain) are always fetched live from Anecdotes, so
-the menus cannot drift out of date. Matching is case- and whitespace-insensitive,
-and you never need to know the `CYB`/`TR` option codes.
+Dropdown options are fetched live from Anecdotes. In addition to UKI Brand and
+Domain, the wizard includes:
+
+- **CIA:** Availability, Confidentiality, and Integrity; all three start
+  selected, and you can choose a subset.
+- **Impacted asset contains PII?:** choose from the live No/Unknown/Yes options.
+- **Tribe:** set to Gaming on create; updates only offer Gaming.
+- **Ratings:** Operational impact, Reputational impact (UKI), Regulatory and
+  legal impact (UKI), Financial impact (UKI), Target impact, and Target
+  likelihood. Each is a single live dropdown selection with choices displayed
+  in numeric order from 1 to 5; example placeholder text is omitted. Inherent
+  likelihood is automated by Anecdotes and is intentionally omitted.
+
+The operational-impact field is `Operational impact (Tech, Process, People)`.
+Matching is case- and whitespace-insensitive, and you never need to know the
+`CYB`/`TR` option codes. If a field cannot be matched uniquely in live metadata,
+the CLI stops before any write.
 
 ## Safety
 
@@ -221,5 +236,5 @@ immediately before applying changes.
 python3 -m pytest cli -q
 ```
 
-52 tests, no network calls, no credentials needed. They run automatically in CI
+58 tests, no network calls, no credentials needed. They run automatically in CI
 via the `Validate risks` workflow.

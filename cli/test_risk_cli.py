@@ -37,6 +37,73 @@ FIELDS = [
     },
     {"id": "f-context", "name": "Context/background", "type": "FreeText"},
     {"id": "f-assets", "name": "Impacted asset/s", "type": "FreeText"},
+    {
+        "id": "f-cia",
+        "name": "CIA",
+        "type": "MultiSelect",
+        "options": [
+            {"id": "o-availability", "label": "Availability"},
+            {"id": "o-confidentiality", "label": "Confidentiality"},
+            {"id": "o-integrity", "label": "Integrity"},
+        ],
+    },
+    {
+        "id": "f-pii",
+        "name": "Impacted asset contains PII?",
+        "type": "SingleSelect",
+        "options": [
+            {"id": "o-pii-no", "label": "No"},
+            {"id": "o-pii-unknown", "label": "Unknown"},
+            {"id": "o-pii-yes", "label": "Yes"},
+        ],
+    },
+    {
+        "id": "f-tribe",
+        "name": "Tribe",
+        "type": "MultiSelect",
+        "options": [
+            {"id": "o-gaming", "label": "Gaming"},
+            {"id": "o-other-tribe", "label": "Other"},
+        ],
+    },
+    {
+        "id": "f-operational",
+        "name": "Operational impact (Tech, Process, People)",
+        "type": "SingleSelect",
+        "options": [{"id": f"o-operational-{n}", "label": str(n)} for n in range(1, 6)],
+    },
+    {
+        "id": "f-reputational",
+        "name": "Reputational impact (UKI)",
+        "type": "SingleSelect",
+        "options": [{"id": f"o-reputational-{n}", "label": str(n)} for n in range(1, 6)],
+    },
+    {
+        "id": "f-regulatory",
+        "name": "Regulatory and legal impact (UKI)",
+        "type": "SingleSelect",
+        "options": [{"id": f"o-regulatory-{n}", "label": str(n)} for n in range(1, 6)],
+    },
+    {
+        "id": "f-financial",
+        "name": "Financial impact (UKI)",
+        "type": "SingleSelect",
+        "options": [{"id": f"o-financial-{n}", "label": str(n)} for n in range(1, 6)],
+    },
+    {
+        "id": "f-target-impact",
+        "name": "Target impact",
+        "type": "SingleSelect",
+        "options": [
+            {"id": f"o-target-impact-{n}", "label": str(n)} for n in range(5, 0, -1)
+        ] + [{"id": "o-target-impact-example", "label": "e.g. 2, 1, 4 (select one)"}],
+    },
+    {
+        "id": "f-target-likelihood",
+        "name": "Target likelihood",
+        "type": "SingleSelect",
+        "options": [{"id": f"o-target-likelihood-{n}", "label": str(n)} for n in range(1, 6)],
+    },
 ]
 
 RISK_SUMMARIES = [
@@ -55,6 +122,15 @@ RISK_DETAIL = {
             "f-domain": "o-cloud",
             "f-context": "Existing context.",
             "f-assets": "Payments platform",
+            "f-cia": ["o-availability", "o-confidentiality", "o-integrity"],
+            "f-pii": "o-pii-no",
+            "f-tribe": ["o-gaming"],
+            "f-operational": "o-operational-1",
+            "f-reputational": "o-reputational-1",
+            "f-regulatory": "o-regulatory-1",
+            "f-financial": "o-financial-1",
+            "f-target-impact": "o-target-impact-1",
+            "f-target-likelihood": "o-target-likelihood-1",
         },
     },
     "risk_bbb": {
@@ -67,6 +143,15 @@ RISK_DETAIL = {
             "f-domain": "o-phishing",
             "f-context": "Other context.",
             "f-assets": "Wallet",
+            "f-cia": ["o-availability"],
+            "f-pii": "o-pii-unknown",
+            "f-tribe": ["o-gaming"],
+            "f-operational": "o-operational-2",
+            "f-reputational": "o-reputational-2",
+            "f-regulatory": "o-regulatory-2",
+            "f-financial": "o-financial-2",
+            "f-target-impact": "o-target-impact-2",
+            "f-target-likelihood": "o-target-likelihood-2",
         },
     },
 }
@@ -114,7 +199,11 @@ def cli(monkeypatch):
 
 def scripted(monkeypatch, answers):
     answers = iter(answers)
-    monkeypatch.setattr("builtins.input", lambda prompt="": next(answers))
+
+    def next_answer(prompt=""):
+        return next(answers)
+
+    monkeypatch.setattr("builtins.input", next_answer)
 
 
 CREATE_ANSWERS = [
@@ -124,6 +213,14 @@ CREATE_ANSWERS = [
     "phishing",                 # Domain (lowercase, no CYB code)
     "Some context.",            # Context/background
     "Payments platform",        # Impacted asset/s
+    "",                         # CIA defaults to all three options
+    "1",                        # PII: No
+    "1",                        # Operational impact
+    "1",                        # Reputational impact
+    "1",                        # Regulatory and legal impact
+    "1",                        # Financial impact
+    "1",                        # Target impact
+    "1",                        # Target likelihood
 ]
 
 
@@ -259,6 +356,18 @@ def test_multiselect_accepts_several_values_and_rejects_bad_ones(monkeypatch, ca
     assert "Not valid" in capsys.readouterr().out
 
 
+def test_multiselect_enter_keeps_empty_current_selection(monkeypatch):
+    scripted(monkeypatch, [""])
+    assert risk_cli.select_many("CIA", ["Availability", "Confidentiality", "Integrity"], []) == []
+
+
+def test_multiselect_enter_keeps_nonempty_current_selection(monkeypatch):
+    scripted(monkeypatch, [""])
+    assert risk_cli.select_many("CIA", ["Availability", "Confidentiality"], ["Availability"]) == [
+        "Availability"
+    ]
+
+
 def test_multiselect_resolves_to_option_ids():
     resolver = FieldResolver(FIELDS)
     assert resolver.encode("UKI Brand", ["sky bet", "POKERSTARS"]) == (
@@ -279,6 +388,63 @@ def test_decode_turns_option_ids_back_into_labels():
     assert resolver.decode("Domain", "o-phishing") == "CYB03 - Phishing"
 
 
+def test_rating_choices_are_sorted_and_example_placeholder_is_filtered(monkeypatch, capsys):
+    resolver = FieldResolver(FIELDS)
+    assert risk_cli.rating_options_for(resolver, "target_impact") == ["1", "2", "3", "4", "5"]
+    scripted(monkeypatch, ["5"])
+    output = risk_cli.select_rating("Target impact", risk_cli.rating_options_for(resolver, "target_impact"))
+    assert output == "5"
+    assert "e.g." not in capsys.readouterr().out
+
+
+def test_numeric_rating_labels_resolve_to_option_ids():
+    resolver = FieldResolver(
+        [
+            {
+                "id": "field-rating",
+                "name": "Rating",
+                "type": "SingleSelect",
+                "options": [{"id": f"option-{n}", "label": f"{n} - Rating {n}"} for n in range(5, 0, -1)],
+            }
+        ]
+    )
+    assert resolver.encode("Rating", "2") == ("field-rating", "option-2")
+
+
+def test_confirmed_full_field_names_resolve_exactly():
+    resolver = FieldResolver(FIELDS)
+    assert risk_cli.live_field_name(resolver, "operational_impact") == "Operational impact (Tech, Process, People)"
+    assert risk_cli.live_field_name(resolver, "reputational_impact") == "Reputational impact (UKI)"
+    assert risk_cli.live_field_name(resolver, "regulatory_legal_impact") == "Regulatory and legal impact (UKI)"
+    assert risk_cli.live_field_name(resolver, "financial_impact") == "Financial impact (UKI)"
+
+
+def test_exact_operational_impact_name_wins_over_similar_field():
+    resolver = FieldResolver(
+        FIELDS + [
+            {
+                "id": "f-operational-other",
+                "name": "Operational impact (Technology, Process, People)",
+                "type": "SingleSelect",
+            }
+        ]
+    )
+    assert risk_cli.live_field_name(resolver, "operational_impact") == "Operational impact (Tech, Process, People)"
+
+
+def test_missing_exact_assessment_field_fails_closed():
+    resolver = FieldResolver(FIELDS[:-1])
+    with pytest.raises(AnecdotesError, match="Target likelihood"):
+        risk_cli.live_field_name(resolver, "target_likelihood")
+
+    lookalike = FieldResolver(
+        [item for item in FIELDS if item.get("name") != "Operational impact (Tech, Process, People)"]
+        + [{"id": "f-operational-other", "name": "Operational impact (Technology, Process, People)", "type": "SingleSelect"}]
+    )
+    with pytest.raises(AnecdotesError, match=r"Operational impact \(Tech, Process, People\)"):
+        risk_cli.live_field_name(lookalike, "operational_impact")
+
+
 def test_current_select_values_use_the_same_form_as_the_menu():
     """'TR04 - Cloud Platform Adoption' must read back as the menu label."""
     resolver = FieldResolver(FIELDS)
@@ -288,7 +454,10 @@ def test_current_select_values_use_the_same_form_as_the_menu():
 
 
 def test_reselecting_the_same_domain_is_not_a_change(monkeypatch, cli, capsys):
-    scripted(monkeypatch, ["supplier", "1", "", "", "", "cloud platform adoption", "", ""])
+    scripted(
+        monkeypatch,
+        ["supplier", "1", "", "", "", "cloud platform adoption", "", ""] + [""] * 9,
+    )
     assert risk_cli.main(["update"]) == 0
     assert cli.writes() == []
     assert "No changes detected. Nothing to update." in capsys.readouterr().out
@@ -316,7 +485,10 @@ def test_create_confirmation_defaults_to_no(monkeypatch, cli, capsys):
 
 
 def test_update_confirmation_defaults_to_no(monkeypatch, cli, capsys):
-    scripted(monkeypatch, ["supplier", "1", "", "", "New description.", "", "", "", ""])
+    scripted(
+        monkeypatch,
+        ["supplier", "1", "", "", "New description.", "", "", "", ""] + [""] * 9,
+    )
     assert risk_cli.main(["update"]) == 0
     assert cli.writes() == []
     assert "Aborted" in capsys.readouterr().out
@@ -336,6 +508,10 @@ def test_create_dry_run_never_posts(monkeypatch, cli, capsys):
     assert risk_cli.DRY_RUN_FOOTER in out
     assert "POST /risk/v1/risk" in out
     assert "o-skybet" in out and "f-brand" in out
+    assert "f-cia" in out and "o-integrity" in out
+    assert "f-pii" in out and "f-target-likelihood" in out
+    assert "e.g." not in out
+    assert "  1   2   3   4   5" in out
 
 
 def test_create_sends_expected_payload_after_explicit_yes(monkeypatch, cli):
@@ -348,6 +524,17 @@ def test_create_sends_expected_payload_after_explicit_yes(monkeypatch, cli):
     assert payload["name"] == "Supplier outage"
     assert payload["fields"]["f-brand"] == ["o-skybet", "o-pokerstars"]
     assert payload["fields"]["f-domain"] == "o-phishing"
+    assert payload["fields"]["f-cia"] == [
+        "o-availability",
+        "o-confidentiality",
+        "o-integrity",
+    ]
+    assert payload["fields"]["f-pii"] == "o-pii-no"
+    assert payload["fields"]["f-tribe"] == ["o-gaming"]
+    assert payload["fields"]["f-target-impact"] == "o-target-impact-1"
+    assert payload["fields"]["f-target-likelihood"] == "o-target-likelihood-1"
+    assert len(payload["fields"]) == 14
+    assert "f-inherent" not in payload["fields"]
     assert payload["register_id"] == risk_cli.REGISTER_ID
 
 
@@ -364,6 +551,11 @@ def test_create_rejects_empty_required_text(monkeypatch):
     assert risk_cli.prompt_required("Risk name") == "Finally a name"
 
 
+def test_update_can_keep_an_existing_empty_required_text_field(monkeypatch):
+    scripted(monkeypatch, [""])
+    assert risk_cli.prompt_required("Risk event description", "") == ""
+
+
 # --------------------------------------------------------------------------- #
 # Update
 # --------------------------------------------------------------------------- #
@@ -372,7 +564,7 @@ def test_create_rejects_empty_required_text(monkeypatch):
 def test_update_reads_risks_and_uses_internal_id(monkeypatch, cli):
     scripted(
         monkeypatch,
-        ["supplier", "1", "", "sky bet, pokerstars", "Payments and withdrawals.", "", "", "", "y"],
+        ["supplier", "1", "", "sky bet,pokerstars", "Payments and withdrawals."] + [""] * 12 + ["y"],
     )
     assert risk_cli.main(["update"]) == 0
     assert ("GET", "list_risks", risk_cli.REGISTER_ID) in cli.calls
@@ -386,7 +578,7 @@ def test_update_reads_risks_and_uses_internal_id(monkeypatch, cli):
 def test_update_payload_contains_only_changed_fields(monkeypatch, cli):
     scripted(
         monkeypatch,
-        ["supplier", "1", "", "sky bet, pokerstars", "Payments and withdrawals.", "", "", "", "y"],
+        ["supplier", "1", "", "sky bet,pokerstars", "Payments and withdrawals."] + [""] * 12 + ["y"],
     )
     risk_cli.main(["update"])
     _, _, payload = cli.writes()[0]
@@ -395,15 +587,28 @@ def test_update_payload_contains_only_changed_fields(monkeypatch, cli):
     assert payload["fields"]["f-brand"] == ["o-skybet", "o-pokerstars"]
 
 
+def test_update_patches_only_changed_new_assessment_field(monkeypatch, cli):
+    scripted(
+        monkeypatch,
+        ["supplier", "1"] + [""] * 7 + ["3"] + [""] * 7 + ["y"],
+    )
+    assert risk_cli.main(["update"]) == 0
+    _, _, payload = cli.writes()[0]
+    assert payload == {"fields": {"f-pii": "o-pii-yes"}}
+
+
 def test_update_does_nothing_when_no_changes(monkeypatch, cli, capsys):
-    scripted(monkeypatch, ["supplier", "1", "", "", "", "", "", ""])
+    scripted(monkeypatch, ["supplier", "1", "", "", "", "", "", ""] + [""] * 9)
     assert risk_cli.main(["update"]) == 0
     assert cli.writes() == []
     assert "No changes detected. Nothing to update." in capsys.readouterr().out
 
 
 def test_update_dry_run_never_patches(monkeypatch, cli, capsys):
-    scripted(monkeypatch, ["supplier", "1", "", "", "Payments and withdrawals.", "", "", ""])
+    scripted(
+        monkeypatch,
+        ["supplier", "1", "", "", "Payments and withdrawals.", "", "", ""] + [""] * 9,
+    )
     assert risk_cli.main(["update", "--dry-run"]) == 0
     assert cli.writes() == []
     out = capsys.readouterr().out
@@ -414,7 +619,10 @@ def test_update_dry_run_never_patches(monkeypatch, cli, capsys):
 
 
 def test_ambiguous_search_requires_explicit_selection(monkeypatch, cli, capsys):
-    scripted(monkeypatch, ["supplier", "2", "", "", "Changed description.", "", "", "", "y"])
+    scripted(
+        monkeypatch,
+        ["supplier", "2", "", "", "Changed description."] + [""] * 12 + ["y"],
+    )
     risk_cli.main(["update"])
     out = capsys.readouterr().out
     assert "UKI-1234" in out and "UKI-1392" in out
@@ -440,7 +648,7 @@ def test_empty_search_results_never_create_or_patch(monkeypatch, cli, capsys):
 
 
 def test_update_shows_current_values_from_anecdotes(monkeypatch, cli, capsys):
-    scripted(monkeypatch, ["supplier", "1", "", "", "", "", "", ""])
+    scripted(monkeypatch, ["supplier", "1", "", "", "", "", "", ""] + [""] * 9)
     risk_cli.main(["update"])
     out = capsys.readouterr().out
     assert "Supplier outage could affect payments." in out
@@ -504,7 +712,10 @@ def _tracked_files():
     "argv,answers",
     [
         (["create", "--dry-run"], CREATE_ANSWERS),
-        (["update", "--dry-run"], ["supplier", "1", "", "", "Changed.", "", "", ""]),
+        (
+            ["update", "--dry-run"],
+            ["supplier", "1", "", "", "Changed.", "", "", ""] + [""] * 9,
+        ),
     ],
 )
 def test_cli_never_writes_any_local_file(monkeypatch, cli, argv, answers):

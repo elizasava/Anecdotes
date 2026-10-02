@@ -45,6 +45,15 @@ FIELD_NAMES = {
     "domain": "Domain",
     "context_background": "Context/background",
     "impacted_assets": "Impacted asset/s",
+    "cia": "CIA",
+    "pii": "Impacted asset contains PII?",
+    "tribe": "Tribe",
+    "operational_impact": "Operational impact (Tech, Process, People)",
+    "reputational_impact": "Reputational impact (UKI)",
+    "regulatory_legal_impact": "Regulatory and legal impact (UKI)",
+    "financial_impact": "Financial impact (UKI)",
+    "target_impact": "Target impact",
+    "target_likelihood": "Target likelihood",
 }
 
 CUSTOM_FIELD_KEYS = (
@@ -53,8 +62,27 @@ CUSTOM_FIELD_KEYS = (
     "domain",
     "context_background",
     "impacted_assets",
+    "cia",
+    "pii",
+    "tribe",
+    "operational_impact",
+    "reputational_impact",
+    "regulatory_legal_impact",
+    "financial_impact",
+    "target_impact",
+    "target_likelihood",
 )
 SELECT_KEYS = ("uki_brand", "domain")
+MULTI_SELECT_KEYS = ("uki_brand", "cia")
+TEXT_KEYS = ("risk_event_description", "context_background", "impacted_assets")
+RATING_KEYS = (
+    "operational_impact",
+    "reputational_impact",
+    "regulatory_legal_impact",
+    "financial_impact",
+    "target_impact",
+    "target_likelihood",
+)
 
 # Expected options, used only to warn when live Anecdotes metadata has drifted.
 # Live metadata always wins.
@@ -444,7 +472,26 @@ class FieldResolver:
         aliases = [label]
         if " - " in label:
             aliases.append(label.split(" - ", 1)[1])
+            numeric_prefix = re.match(r"^\s*([1-5])\s+-", label)
+            if numeric_prefix:
+                aliases.append(numeric_prefix.group(1))
         return list(dict.fromkeys(aliases))
+
+
+def live_field_name(resolver: FieldResolver, key: str) -> str:
+    expected = FIELD_NAMES[key]
+    available = [
+        item["name"]
+        for item in resolver.definitions
+        if isinstance(item.get("name"), str)
+    ]
+    exact = [name for name in available if normalize(name) == normalize(expected)]
+    if len(exact) == 1:
+        return exact[0]
+    raise AnecdotesError(
+        f"Custom field {expected!r} was not found in live Anecdotes metadata. "
+        f"Available names: {', '.join(sorted(available))}"
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -478,6 +525,38 @@ def display_options(resolver: FieldResolver, field_name: str) -> list[str]:
     if len({normalize(item) for item in stripped}) == len(labels):
         return stripped
     return labels
+
+
+def options_for(resolver: FieldResolver, key: str) -> list[str]:
+    return display_options(resolver, live_field_name(resolver, key))
+
+
+def rating_options_for(resolver: FieldResolver, key: str) -> list[str]:
+    field_name = live_field_name(resolver, key)
+    by_rating: dict[str, str] = {}
+    for label in resolver.option_labels(field_name):
+        match = re.match(r"^\s*([1-5])(?=\s|$|[-:.)])", label)
+        if not match:
+            continue
+        rating = match.group(1)
+        if rating in by_rating:
+            raise AnecdotesError(f"Rating {rating} is duplicated in Anecdotes field {field_name!r}")
+        by_rating[rating] = rating
+    expected = [str(value) for value in range(1, 6)]
+    if set(by_rating) != set(expected):
+        raise AnecdotesError(
+            f"Anecdotes field {field_name!r} must provide ratings 1 through 5. "
+            f"Found: {', '.join(sorted(by_rating)) or '(none)'}"
+        )
+    return expected
+
+
+def rating_number(value: Any) -> Any:
+    if isinstance(value, str):
+        match = re.match(r"^\s*([1-5])(?=\s|$|[-:.)])", value)
+        if match:
+            return match.group(1)
+    return value
 
 
 def display_label_map(resolver: FieldResolver, field_name: str) -> dict[str, str]:
@@ -543,10 +622,7 @@ def prompt_required(label: str, current: str | None = None) -> str:
             print(f"  Current: {current if current else '(empty)'}")
             raw = input("  New value (Enter to keep unchanged): ").strip()
             if not raw:
-                if current:
-                    return current
-                print("  This field is required and is currently empty. Please enter a value.")
-                continue
+                return current
             return raw
         raw = input("  Value: ").strip()
         if raw:
@@ -582,17 +658,45 @@ def select_one(label: str, options: list[str], current: str | None = None) -> st
         print(f"  {raw!r} is not a valid option. Pick a number 1-{len(options)} or type the name.")
 
 
-def select_many(label: str, options: list[str], current: list[str] | None = None) -> list[str]:
+def select_rating(label: str, options: list[str], current: str | None = None) -> str:
     editing = current is not None
     while True:
-        _print_menu(label, options, current or [])
+        print(f"\n{label}")
+        print("  1   2   3   4   5")
+        if editing:
+            print(f"  Current: {current if current else '(empty)'}")
+            raw = input("  Select a value from 1 to 5 (Enter to keep unchanged): ").strip()
+            if not raw and current:
+                return current
+        else:
+            raw = input("  Select a value from 1 to 5: ").strip()
+        if raw in options:
+            return raw
+        print("  Enter a number from 1 to 5.")
+
+
+def select_many(
+    label: str,
+    options: list[str],
+    current: list[str] | None = None,
+    default: list[str] | None = None,
+) -> list[str]:
+    editing = current is not None
+    selected = current if editing else default
+    while True:
+        _print_menu(label, options, selected or [])
         if editing:
             print(f"  Current: {', '.join(current) if current else '(none)'}")
             raw = input("  Select one or more (comma-separated, Enter to keep unchanged): ").strip()
-            if not raw and current:
-                return list(current)
+        elif default is not None:
+            print(f"  Default: {', '.join(default)}")
+            raw = input("  Select one or more (comma-separated, Enter to keep default): ").strip()
         else:
             raw = input("  Select one or more (comma-separated): ").strip()
+        if not raw and editing:
+            return list(current or [])
+        if not raw and default:
+            return list(default)
         if not raw:
             print("  At least one selection is required.")
             continue
@@ -696,16 +800,20 @@ def read_current_values(risk: dict[str, Any], resolver: FieldResolver) -> dict[s
     raw_fields = risk_field_values(risk)
     values: dict[str, Any] = {"risk_name": top_str(risk, NAME_KEYS) or ""}
     for key in CUSTOM_FIELD_KEYS:
-        field_name = FIELD_NAMES[key]
+        field_name = live_field_name(resolver, key)
         value = resolver.decode(field_name, raw_fields.get(resolver.field_id(field_name)))
-        values[key] = to_display(resolver, field_name, value) if key in SELECT_KEYS else value
+        if key in RATING_KEYS:
+            values[key] = rating_number(value)
+        else:
+            values[key] = to_display(resolver, field_name, value) if key not in TEXT_KEYS else value
     return values
 
 
 def build_create_payload(values: dict[str, Any], resolver: FieldResolver) -> dict[str, Any]:
     encoded: dict[str, Any] = {}
     for key in CUSTOM_FIELD_KEYS:
-        field_id, encoded_value = resolver.encode(FIELD_NAMES[key], values[key])
+        field_name = live_field_name(resolver, key)
+        field_id, encoded_value = resolver.encode(field_name, values[key])
         encoded[field_id] = encoded_value
     return {"name": values["risk_name"], "fields": encoded, "register_id": REGISTER_ID}
 
@@ -739,10 +847,11 @@ def print_resolution(resolver: FieldResolver, values: dict[str, Any]) -> None:
     print(RULE)
     for key in CUSTOM_FIELD_KEYS:
         field_name = FIELD_NAMES[key]
-        field_id, encoded = resolver.encode(field_name, values[key])
+        actual_name = live_field_name(resolver, key)
+        field_id, encoded = resolver.encode(actual_name, values[key])
         print(f"\n{field_name}")
         print(f"  custom-field id: {field_id}")
-        if key in SELECT_KEYS:
+        if key not in TEXT_KEYS:
             print(f"  selected option name(s): {render(values[key])}")
             print(f"  resolved option id(s):   {render(encoded)}")
         else:
@@ -795,7 +904,7 @@ def build_patch(changed: list[str], proposed: dict[str, Any], resolver: FieldRes
     for key in changed:
         if key == "risk_name":
             continue
-        field_id, encoded = resolver.encode(FIELD_NAMES[key], proposed[key])
+        field_id, encoded = resolver.encode(live_field_name(resolver, key), proposed[key])
         fields[field_id] = encoded
     if fields:
         patch["fields"] = fields
@@ -808,9 +917,9 @@ def build_patch(changed: list[str], proposed: dict[str, Any], resolver: FieldRes
 
 
 def collect_new_values(resolver: FieldResolver) -> dict[str, Any]:
-    brand_field = FIELD_NAMES["uki_brand"]
-    domain_field = FIELD_NAMES["domain"]
-    return {
+    brand_field = live_field_name(resolver, "uki_brand")
+    domain_field = live_field_name(resolver, "domain")
+    values = {
         "risk_name": prompt_required("Risk name"),
         "uki_brand": select_many(brand_field, display_options(resolver, brand_field)),
         "risk_event_description": prompt_required(FIELD_NAMES["risk_event_description"]),
@@ -818,13 +927,38 @@ def collect_new_values(resolver: FieldResolver) -> dict[str, Any]:
         "context_background": prompt_required(FIELD_NAMES["context_background"]),
         "impacted_assets": prompt_required(FIELD_NAMES["impacted_assets"]),
     }
+    cia_name = live_field_name(resolver, "cia")
+    cia_options = display_options(resolver, cia_name)
+    default_cia = [
+        resolve_option(label, cia_options)
+        for label in ("Availability", "Confidentiality", "Integrity")
+    ]
+    if any(value is None for value in default_cia):
+        raise AnecdotesError(
+            "Live CIA options must include Availability, Confidentiality, and Integrity. "
+            f"Found: {', '.join(cia_options)}"
+        )
+    values["cia"] = select_many("CIA", cia_options, default=[value for value in default_cia if value])
+
+    values["pii"] = select_one(FIELD_NAMES["pii"], options_for(resolver, "pii"))
+    for key in RATING_KEYS:
+        values[key] = select_rating(FIELD_NAMES[key], rating_options_for(resolver, key))
+
+
+    tribe_name = live_field_name(resolver, "tribe")
+    tribe_options = display_options(resolver, tribe_name)
+    gaming = resolve_option("Gaming", tribe_options)
+    if gaming is None:
+        raise AnecdotesError(f"Live Tribe options do not include Gaming. Found: {', '.join(tribe_options)}")
+    values["tribe"] = [gaming] if resolver.is_multi_select(tribe_name) else gaming
+    return values
 
 
 def collect_edits(current: dict[str, Any], resolver: FieldResolver) -> dict[str, Any]:
-    brand_field = FIELD_NAMES["uki_brand"]
-    domain_field = FIELD_NAMES["domain"]
+    brand_field = live_field_name(resolver, "uki_brand")
+    domain_field = live_field_name(resolver, "domain")
     current_domain = current["domain"] if isinstance(current["domain"], str) else ""
-    return {
+    proposed = {
         "risk_name": prompt_required("Risk name", current["risk_name"]),
         "uki_brand": select_many(
             brand_field, display_options(resolver, brand_field), as_list(current["uki_brand"])
@@ -840,6 +974,30 @@ def collect_edits(current: dict[str, Any], resolver: FieldResolver) -> dict[str,
             FIELD_NAMES["impacted_assets"], str(current["impacted_assets"])
         ),
     }
+    for key in CUSTOM_FIELD_KEYS[5:]:
+        field_name = live_field_name(resolver, key)
+        options = display_options(resolver, field_name)
+        current_value = current[key]
+        if key in MULTI_SELECT_KEYS:
+            proposed[key] = select_many(
+                FIELD_NAMES[key], options, as_list(current_value)
+            )
+        elif key == "tribe":
+            gaming = resolve_option("Gaming", options)
+            if gaming is None:
+                raise AnecdotesError(f"Live Tribe options do not include Gaming. Found: {', '.join(options)}")
+            current_tribe = as_list(current_value)
+            proposed[key] = select_one(
+                FIELD_NAMES[key], [gaming], current_tribe[0] if len(current_tribe) == 1 else ""
+            )
+        elif key in RATING_KEYS:
+            proposed[key] = select_rating(
+                FIELD_NAMES[key], rating_options_for(resolver, key), str(rating_number(current_value))
+            )
+        else:
+            current_scalar = current_value if isinstance(current_value, str) else ""
+            proposed[key] = select_one(FIELD_NAMES[key], options, current_scalar)
+    return proposed
 
 
 def cmd_create(args: argparse.Namespace) -> int:
