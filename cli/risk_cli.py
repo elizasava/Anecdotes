@@ -22,6 +22,11 @@ from typing import Any
 
 import requests
 
+try:  # Gives prompts arrow-key line editing instead of raw escape codes.
+    import readline  # noqa: F401
+except ImportError:
+    pass
+
 # --------------------------------------------------------------------------- #
 # Configuration (override via environment variables)
 # --------------------------------------------------------------------------- #
@@ -475,6 +480,24 @@ def display_options(resolver: FieldResolver, field_name: str) -> list[str]:
     return labels
 
 
+def display_label_map(resolver: FieldResolver, field_name: str) -> dict[str, str]:
+    """Maps each live option label onto the form shown in menus."""
+    return {
+        normalize(raw): shown
+        for raw, shown in zip(resolver.option_labels(field_name), display_options(resolver, field_name))
+    }
+
+
+def to_display(resolver: FieldResolver, field_name: str, value: Any) -> Any:
+    """Keeps stored values comparable with menu options, so 'TR3 - X' and 'X' match."""
+    by_label = display_label_map(resolver, field_name)
+    if isinstance(value, list):
+        return [by_label.get(normalize(item), item) for item in value]
+    if isinstance(value, str):
+        return by_label.get(normalize(value), value)
+    return value
+
+
 def warn_on_option_drift(resolver: FieldResolver) -> None:
     for key in SELECT_KEYS:
         field_name = FIELD_NAMES[key]
@@ -674,7 +697,8 @@ def read_current_values(risk: dict[str, Any], resolver: FieldResolver) -> dict[s
     values: dict[str, Any] = {"risk_name": top_str(risk, NAME_KEYS) or ""}
     for key in CUSTOM_FIELD_KEYS:
         field_name = FIELD_NAMES[key]
-        values[key] = resolver.decode(field_name, raw_fields.get(resolver.field_id(field_name)))
+        value = resolver.decode(field_name, raw_fields.get(resolver.field_id(field_name)))
+        values[key] = to_display(resolver, field_name, value) if key in SELECT_KEYS else value
     return values
 
 

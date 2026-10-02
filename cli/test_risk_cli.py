@@ -142,7 +142,7 @@ def test_cli_imports_no_workflow_modules():
     """Only stdlib plus `requests` may be imported."""
     source = Path(risk_cli.__file__).read_text(encoding="utf-8")
     imports = re.findall(r"^(?:import|from)\s+([A-Za-z_][\w.]*)", source, flags=re.MULTILINE)
-    allowed = {"argparse", "json", "os", "re", "sys", "time", "typing", "requests", "__future__"}
+    allowed = {"argparse", "json", "os", "re", "sys", "time", "typing", "requests", "readline", "__future__"}
     assert set(imports) <= allowed, f"unexpected imports: {set(imports) - allowed}"
 
 
@@ -277,6 +277,21 @@ def test_decode_turns_option_ids_back_into_labels():
     resolver = FieldResolver(FIELDS)
     assert resolver.decode("UKI Brand", ["o-skybet", "o-tombola"]) == ["Sky Bet", "tombola"]
     assert resolver.decode("Domain", "o-phishing") == "CYB03 - Phishing"
+
+
+def test_current_select_values_use_the_same_form_as_the_menu():
+    """'TR04 - Cloud Platform Adoption' must read back as the menu label."""
+    resolver = FieldResolver(FIELDS)
+    current = risk_cli.read_current_values(RISK_DETAIL["risk_aaa"], resolver)
+    assert current["domain"] == "Cloud Platform Adoption"
+    assert current["domain"] in risk_cli.display_options(resolver, "Domain")
+
+
+def test_reselecting_the_same_domain_is_not_a_change(monkeypatch, cli, capsys):
+    scripted(monkeypatch, ["supplier", "1", "", "", "", "cloud platform adoption", "", ""])
+    assert risk_cli.main(["update"]) == 0
+    assert cli.writes() == []
+    assert "No changes detected. Nothing to update." in capsys.readouterr().out
 
 
 # --------------------------------------------------------------------------- #
