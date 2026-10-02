@@ -190,7 +190,10 @@ one.
 
 `update` lists risks from Anecdotes, requires you to explicitly select one,
 shows its current values, lets you edit any field, prints an OLD -> NEW diff, and
-patches only the fields that actually changed.
+patches only the fields that actually changed. It reads the selected risk's name
+from `/risk/v1/risk/{id}` and its saved custom-field values from
+`/risk/v1/risk/fields`; the detail endpoint alone may return only a subset of
+the fields shown in the Anecdotes UI. If either read is incomplete, update stops.
 
 Dropdown options are fetched live from Anecdotes. In addition to UKI Brand and
 Domain, the wizard includes:
@@ -236,5 +239,5 @@ immediately before applying changes.
 python3 -m pytest cli -q
 ```
 
-58 tests, no network calls, no credentials needed. They run automatically in CI
+71 tests, no network calls, no credentials needed. They run automatically in CI
 via the `Validate risks` workflow.

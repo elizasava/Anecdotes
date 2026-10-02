@@ -304,6 +304,20 @@ class AnecdotesClient:
             return result
         raise AnecdotesError(f"Get Risk {internal_id} returned an unexpected response")
 
+    def get_risk_fields(self, internal_id: str) -> dict[str, Any]:
+        result = self._request("GET", "/risk/v1/risk/fields")
+        if not isinstance(result, dict) or internal_id not in result:
+            raise AnecdotesError(f"Risk fields response did not include {internal_id}; refusing to edit incomplete data")
+        fields = result[internal_id]
+        if not isinstance(fields, dict):
+            raise AnecdotesError("Risk fields response has an unexpected format; refusing to edit incomplete data")
+        values: dict[str, Any] = {}
+        for field_id, entry in fields.items():
+            if not isinstance(field_id, str) or not isinstance(entry, dict) or "value" not in entry:
+                raise AnecdotesError("Risk fields response has an unexpected format; refusing to edit incomplete data")
+            values[field_id] = entry["value"]
+        return values
+
     def create_risk(self, payload: dict[str, Any]) -> dict[str, Any]:
         result = self._request("POST", "/risk/v1/risk", json=payload)
         if not isinstance(result, dict):
@@ -645,7 +659,7 @@ def select_one(label: str, options: list[str], current: str | None = None) -> st
         if editing:
             print(f"  Current: {current if current else '(none)'}")
             raw = input("  Select one (number or name, Enter to keep unchanged): ").strip()
-            if not raw and current:
+            if not raw:
                 return current
         else:
             raw = input("  Select one (number or name): ").strip()
@@ -666,7 +680,7 @@ def select_rating(label: str, options: list[str], current: str | None = None) ->
         if editing:
             print(f"  Current: {current if current else '(empty)'}")
             raw = input("  Select a value from 1 to 5 (Enter to keep unchanged): ").strip()
-            if not raw and current:
+            if not raw:
                 return current
         else:
             raw = input("  Select a value from 1 to 5: ").strip()
@@ -781,10 +795,15 @@ def risk_field_values(risk: dict[str, Any]) -> dict[str, Any]:
     for key in ("fields", "custom_fields", "customFields"):
         candidate = risk.get(key)
         if isinstance(candidate, (dict, list)):
-            raw = candidate
-            break
+            if candidate:
+                raw = candidate
+                break
+            if raw is None:
+                raw = candidate
     if isinstance(raw, dict):
         return dict(raw)
+    if raw is None:
+        raise AnecdotesError("Risk detail did not include custom fields; refusing to edit incomplete data")
     values: dict[str, Any] = {}
     if isinstance(raw, list):
         for item in raw:
@@ -798,6 +817,24 @@ def risk_field_values(risk: dict[str, Any]) -> dict[str, Any]:
 
 def read_current_values(risk: dict[str, Any], resolver: FieldResolver) -> dict[str, Any]:
     raw_fields = risk_field_values(risk)
+    brand_id = resolver.field_id(live_field_name(resolver, "uki_brand"))
+    if brand_id not in raw_fields:
+        containers = ", ".join(
+            f"{key}={type(risk[key]).__name__}({len(risk[key])})"
+            for key in ("fields", "custom_fields", "customFields")
+            if isinstance(risk.get(key), (dict, list))
+        )
+        recognized = [
+            FIELD_NAMES[key]
+            for key in CUSTOM_FIELD_KEYS
+            if resolver.field_id(live_field_name(resolver, key)) in raw_fields
+        ]
+        raise AnecdotesError(
+            "Risk detail did not include UKI Brand; refusing to edit incomplete data. "
+            f"Field containers: {containers or '(none)'}; parsed entries: {len(raw_fields)}; "
+            f"recognized fields: {', '.join(recognized) or '(none)'}; "
+            f"unrecognized entries: {len(raw_fields) - len(recognized)}"
+        )
     values: dict[str, Any] = {"risk_name": top_str(risk, NAME_KEYS) or ""}
     for key in CUSTOM_FIELD_KEYS:
         field_name = live_field_name(resolver, key)
@@ -842,10 +879,14 @@ def print_summary(title: str, values: dict[str, Any]) -> None:
     print(f"\n{RULE}")
 
 
-def print_resolution(resolver: FieldResolver, values: dict[str, Any]) -> None:
+def print_resolution(
+    resolver: FieldResolver, values: dict[str, Any], keys: tuple[str, ...] = CUSTOM_FIELD_KEYS
+) -> None:
     print("\nResolved Anecdotes metadata")
     print(RULE)
-    for key in CUSTOM_FIELD_KEYS:
+    for key in keys:
+        if key == "risk_name":
+            continue
         field_name = FIELD_NAMES[key]
         actual_name = live_field_name(resolver, key)
         field_id, encoded = resolver.encode(actual_name, values[key])
@@ -1094,6 +1135,9 @@ def cmd_update(args: argparse.Namespace) -> int:
         return 1
 
     live_risk = client.get_risk(internal_id)
+    if internal_id_of(live_risk) != internal_id:
+        raise AnecdotesError("Risk detail ID does not match the selected risk; refusing to update")
+    live_risk = dict(live_risk, fields=client.get_risk_fields(internal_id))
     current = read_current_values(live_risk, resolver)
     display_id = display_id_of(live_risk) or display_id_of(selected) or "(none)"
 
@@ -1115,7 +1159,7 @@ def cmd_update(args: argparse.Namespace) -> int:
         print(f"\nRisk ID: {display_id}")
         print(f"Anecdotes internal ID: {internal_id}")
         print(f"Changed fields: {', '.join(changed)}")
-        print_resolution(resolver, proposed)
+        print_resolution(resolver, proposed, tuple(changed))
         print("\nRequest that WOULD be sent:")
         print(f"  PATCH /risk/v1/risk/{internal_id}")
         print(json.dumps(patch, indent=2, sort_keys=True))

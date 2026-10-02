@@ -177,6 +177,10 @@ class FakeClient:
             raise AnecdotesError("not found", status_code=404)
         return RISK_DETAIL[internal_id]
 
+    def get_risk_fields(self, internal_id):
+        self.calls.append(("GET", "risk_fields", internal_id))
+        return RISK_DETAIL[internal_id]["fields"]
+
     def create_risk(self, payload):
         self.calls.append(("POST", payload))
         return {"id": "risk_new123", "customer_risk_id": "UKI-9999"}
@@ -306,6 +310,25 @@ def test_dry_run_client_still_allows_reads(monkeypatch):
     assert client.session.requests == [("GET", "https://example.invalid/custom-fields/v1/fields")]
 
 
+def test_risk_fields_read_resolves_selected_risk_only(monkeypatch):
+    client = make_client(monkeypatch, read_only=True)
+    response = {
+        "risk_aaa": {"f-brand": {"value": ["o-skybet"]}, "f-desc": {"value": "Existing"}},
+        "risk_bbb": {"f-brand": {"value": ["o-tombola"]}},
+    }
+    monkeypatch.setattr(client, "_request", lambda method, path: response)
+    assert client.get_risk_fields("risk_aaa") == {"f-brand": ["o-skybet"], "f-desc": "Existing"}
+    assert client.get_risk_fields("risk_bbb") == {"f-brand": ["o-tombola"]}
+
+
+@pytest.mark.parametrize("response", [{}, {"risk_aaa": []}, {"risk_aaa": {"f-brand": []}}])
+def test_risk_fields_read_rejects_incomplete_response(monkeypatch, response):
+    client = make_client(monkeypatch, read_only=True)
+    monkeypatch.setattr(client, "_request", lambda method, path: response)
+    with pytest.raises(AnecdotesError, match="refusing to edit incomplete data"):
+        client.get_risk_fields("risk_aaa")
+
+
 def test_create_and_update_helpers_are_blocked_in_dry_run(monkeypatch):
     client = make_client(monkeypatch, read_only=True)
     with pytest.raises(ReadOnlyModeError):
@@ -366,6 +389,12 @@ def test_multiselect_enter_keeps_nonempty_current_selection(monkeypatch):
     assert risk_cli.select_many("CIA", ["Availability", "Confidentiality"], ["Availability"]) == [
         "Availability"
     ]
+
+
+def test_empty_single_choice_and_rating_can_be_kept_during_update(monkeypatch):
+    scripted(monkeypatch, ["", ""])
+    assert risk_cli.select_one("Impacted asset contains PII?", ["No", "Yes"], "") == ""
+    assert risk_cli.select_rating("Target impact", ["1", "2", "3", "4", "5"], "") == ""
 
 
 def test_multiselect_resolves_to_option_ids():
@@ -451,6 +480,39 @@ def test_current_select_values_use_the_same_form_as_the_menu():
     current = risk_cli.read_current_values(RISK_DETAIL["risk_aaa"], resolver)
     assert current["domain"] == "Cloud Platform Adoption"
     assert current["domain"] in risk_cli.display_options(resolver, "Domain")
+
+
+def test_risk_reader_uses_populated_custom_fields_after_empty_fields():
+    detail = dict(RISK_DETAIL["risk_aaa"], fields={}, customFields=RISK_DETAIL["risk_aaa"]["fields"])
+    current = risk_cli.read_current_values(detail, FieldResolver(FIELDS))
+    assert current["uki_brand"] == ["Sky Bet"]
+
+
+def test_incomplete_risk_error_names_fields_without_values():
+    detail = {"fields": {"f-cia": ["o-availability"], "f-pii": "o-pii-yes"}}
+    with pytest.raises(AnecdotesError) as error:
+        risk_cli.read_current_values(detail, FieldResolver(FIELDS))
+    assert "recognized fields: CIA, Impacted asset contains PII?" in str(error.value)
+    assert "unrecognized entries: 0" in str(error.value)
+    assert "o-availability" not in str(error.value)
+    assert "o-pii-yes" not in str(error.value)
+
+
+@pytest.mark.parametrize("fields", [None, {}])
+def test_update_refuses_incomplete_risk_detail(monkeypatch, cli, capsys, fields):
+    detail = {"id": "risk_aaa", "name": "Supplier outage"}
+    if fields is not None:
+        detail["fields"] = fields
+    monkeypatch.setattr(cli, "get_risk", lambda internal_id: detail)
+    monkeypatch.setattr(cli, "get_risk_fields", lambda internal_id: fields or {})
+    scripted(monkeypatch, ["supplier", "1"])
+    assert risk_cli.main(["update", "--dry-run"]) == 1
+    assert cli.writes() == []
+    error = capsys.readouterr().err
+    assert "refusing to edit incomplete data" in error
+    assert "Supplier outage" not in error
+    if fields is not None:
+        assert "Field containers: fields=dict(0)" in error
 
 
 def test_reselecting_the_same_domain_is_not_a_change(monkeypatch, cli, capsys):
@@ -569,6 +631,7 @@ def test_update_reads_risks_and_uses_internal_id(monkeypatch, cli):
     assert risk_cli.main(["update"]) == 0
     assert ("GET", "list_risks", risk_cli.REGISTER_ID) in cli.calls
     assert ("GET", "get_risk", "risk_aaa") in cli.calls
+    assert ("GET", "risk_fields", "risk_aaa") in cli.calls
     writes = cli.writes()
     assert len(writes) == 1
     assert writes[0][0] == "PATCH"
@@ -616,6 +679,20 @@ def test_update_dry_run_never_patches(monkeypatch, cli, capsys):
     assert risk_cli.DRY_RUN_FOOTER in out
     assert "PATCH /risk/v1/risk/risk_aaa" in out
     assert "OLD:" in out and "NEW:" in out
+
+
+def test_update_reads_original_values_from_risk_fields_when_detail_is_partial(monkeypatch, cli, capsys):
+    detail = dict(RISK_DETAIL["risk_aaa"])
+    detail["fields"] = {key: value for key, value in detail["fields"].items() if key.startswith("f-target")}
+    monkeypatch.setattr(cli, "get_risk", lambda internal_id: detail)
+    scripted(monkeypatch, ["supplier", "1"] + [""] * 15)
+    assert risk_cli.main(["update", "--dry-run"]) == 0
+    assert ("GET", "risk_fields", "risk_aaa") in cli.calls
+    assert cli.writes() == []
+    output = capsys.readouterr().out
+    assert "UKI Brand:\nSky Bet" in output
+    assert "Risk event description:\nSupplier outage could affect payments." in output
+    assert "No changes detected. Nothing to update." in output
 
 
 def test_ambiguous_search_requires_explicit_selection(monkeypatch, cli, capsys):
